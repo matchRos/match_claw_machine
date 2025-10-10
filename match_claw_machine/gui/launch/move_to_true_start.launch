@@ -1,0 +1,14 @@
+<launch>
+  <node pkg="match_claw_machine" type="move_to_true_start.py" name="move_to_true_start" output="screen">
+    <param name="pose_topic" value="/mur620b/UR10_l/ur_calibrated_pose"/>
+    <param name="cmd_topic"  value="/mur620b/UR10_r/twist_controller/command_collision_free"/>
+    <param name="start_pos"  value="[0.33263377919966164, -0.028678860128717395, -0.028678860128717395]"/>
+    <param name="pos_tol"    value="0.004"/>
+    <param name="v_max"      value="0.12"/>
+    <param name="a_max"      value="0.35"/>
+    <param name="k_tanh"     value="3.0"/>
+    <param name="rate_hz"    value="100.0"/>
+    <param name="pose_timeout_s" value="0.5"/>
+    <param name="frame_id"   value="base_link"/>
+  </node>
+</launch>

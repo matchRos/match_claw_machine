@@ -1,17 +1,23 @@
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QGroupBox, QCheckBox, QLabel
 from PyQt5.QtCore import Qt
-from ros_interface import launch_drivers, move_to_start_pose
+from ros_interface import (
+    launch_drivers,
+    move_to_initial_pose,
+    switch_to_twist_controller,
+    switch_to_arm_controller,
+    enable_selected_urs,
+)
 
 class ROSGui(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Minimal ROS Control")
-        self.setGeometry(200, 200, 520, 320)
-        self.workspace_name = "catkin_ws_recker"  # wie in deinen Dateien
+        self.setGeometry(200, 200, 600, 340)
+        self.workspace_name = "catkin_ws_recker"
 
         root = QVBoxLayout()
 
-        # Auswahl: Roboter
+        # Robots
         rob_group = QGroupBox("Robots")
         rob_layout = QVBoxLayout()
         self.robots = {
@@ -20,20 +26,19 @@ class ROSGui(QWidget):
             "mur620c": QCheckBox("mur620c"),
             "mur620d": QCheckBox("mur620d"),
         }
-        # default: a/b an
-        self.robots["mur620a"].setChecked(True)
+        #self.robots["mur620a"].setChecked(True)
         self.robots["mur620b"].setChecked(True)
         for cb in self.robots.values():
             rob_layout.addWidget(cb)
         rob_group.setLayout(rob_layout)
 
-        # Auswahl: URs
+        # UR arms
         ur_group = QGroupBox("UR arms")
         ur_layout = QVBoxLayout()
         self.ur10_l = QCheckBox("UR10_l")
         self.ur10_r = QCheckBox("UR10_r")
         self.ur10_l.setChecked(True)
-        self.ur10_r.setChecked(True)
+        #self.ur10_r.setChecked(True)
         ur_layout.addWidget(self.ur10_l)
         ur_layout.addWidget(self.ur10_r)
         ur_group.setLayout(ur_layout)
@@ -44,18 +49,31 @@ class ROSGui(QWidget):
         root.addLayout(sel_row)
 
         # Buttons
-        btn_row = QHBoxLayout()
+        row1 = QHBoxLayout()
         btn_launch = QPushButton("Launch Drivers")
         btn_launch.clicked.connect(lambda: launch_drivers(self))
-        btn_move = QPushButton("Move to Start Pose")
-        btn_move.clicked.connect(lambda: move_to_start_pose(self))
-        btn_row.addWidget(btn_launch)
-        btn_row.addWidget(btn_move)
-        root.addLayout(btn_row)
+        btn_init = QPushButton("Move to Initial Pose")  # <--- umbenannt
+        btn_init.clicked.connect(lambda: move_to_initial_pose(self))
+        row1.addWidget(btn_launch)
+        row1.addWidget(btn_init)
+        root.addLayout(row1)
 
-        # Status-Hinweis
-        note = QLabel("Startet Treiber via SSH und ruft Move-Launches je Robot/UR auf.")
-        note.setAlignment(Qt.AlignCenter)
+        row2 = QHBoxLayout()
+        btn_twist = QPushButton("Switch to Twist Ctrl")
+        btn_twist.clicked.connect(lambda: switch_to_twist_controller(self))
+        btn_arm = QPushButton("Switch to Arm Ctrl")
+        btn_arm.clicked.connect(lambda: switch_to_arm_controller(self))
+        row2.addWidget(btn_twist)
+        row2.addWidget(btn_arm)
+        root.addLayout(row2)
+
+        row3 = QHBoxLayout()
+        btn_enable = QPushButton("Enable UR(s)")
+        btn_enable.clicked.connect(lambda: enable_selected_urs(self))
+        row3.addWidget(btn_enable)
+        root.addLayout(row3)
+
+        note = JLabelCentered("Startet Treiber, Initialpose und Controller-Wechsel je Robot/UR.")
         root.addWidget(note)
 
         self.setLayout(root)
@@ -70,3 +88,8 @@ class ROSGui(QWidget):
         if self.ur10_r.isChecked():
             out.append("UR10_r")
         return out
+
+class JLabelCentered(QLabel):
+    def __init__(self, text):
+        super().__init__(text)
+        self.setAlignment(Qt.AlignCenter)
