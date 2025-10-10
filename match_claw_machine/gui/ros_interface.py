@@ -3,11 +3,12 @@ import rospy
 
 PKG_UTIL = "match_claw_machine"
 LAUNCH_MOVE_HOME = "move_UR_to_home_pose.launch"
-LAUNCH_ENABLE_UR = "enable_all_URs.launch"  # ggf. an deinen Launch-Namen anpassen
+LAUNCH_ENABLE_UR = "enable_all_URs.launch" 
 
 # NEU: exakte Launch-Dateien für Controller-Switch
 LAUNCH_TO_TWIST = "turn_on_all_twist_controllers.launch"
 LAUNCH_TO_ARM   = "turn_on_all_arm_controllers.launch"
+LAUNCH_TRUE_START = "move_to_true_start.launch"  
 
 def _open_in_terminal(cmd: str):
     subprocess.Popen(["gnome-terminal", "--", "bash", "-c", f"{cmd}; exec bash"])
@@ -102,3 +103,21 @@ def enable_selected_urs(gui):
     for robot in selected_robots:
         for ur in selected_urs:
             _enable_ur(robot, ur)
+
+def start_move_to_true_start(gui):
+    selected_robots = gui.get_selected_robots()
+    selected_urs = gui.get_selected_urs()
+    if not selected_robots or not selected_urs:
+        print("Keine Roboter/URs selektiert.")
+        return
+
+    for robot in selected_robots:
+        for ur in selected_urs:
+            pose_topic = f"/{robot}/{ur}/ur_calibrated_pose"
+            cmd_topic  = f"/{robot}/{ur}/twist"  # laut Vorgabe: Twist (nicht -stamped)
+            cmd = (
+                f"ROS_NAMESPACE={robot} roslaunch {PKG_UTIL} {LAUNCH_TRUE_START} "
+                f"pose_topic:={pose_topic} cmd_topic:={cmd_topic}"
+            )
+            print(f"[true-start] {robot}/{ur}: {cmd}")
+            _open_in_terminal(cmd)

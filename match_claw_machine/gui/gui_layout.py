@@ -6,6 +6,7 @@ from ros_interface import (
     switch_to_twist_controller,
     switch_to_arm_controller,
     enable_selected_urs,
+    start_move_to_true_start,
 )
 
 class ROSGui(QWidget):
@@ -72,6 +73,13 @@ class ROSGui(QWidget):
         btn_enable.clicked.connect(lambda: enable_selected_urs(self))
         row3.addWidget(btn_enable)
         root.addLayout(row3)
+
+        row4 = QHBoxLayout()
+        btn_true_start = QPushButton("Move to True Start")
+        btn_true_start.clicked.connect(lambda: start_move_to_true_start(self))
+        row4.addWidget(btn_true_start)
+        root.addLayout(row4)
+
 
         note = JLabelCentered("Startet Treiber, Initialpose und Controller-Wechsel je Robot/UR.")
         root.addWidget(note)
