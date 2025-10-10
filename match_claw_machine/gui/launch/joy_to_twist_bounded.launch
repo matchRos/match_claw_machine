@@ -1,14 +1,14 @@
 <launch>
   <node pkg="match_claw_machine" type="joy_to_twist_bounded.py" name="joy_to_twist_bounded" output="screen">
     <param name="joy_topic"  value="/joy"/>
-    <param name="pose_topic" value="/mur620b/UR10_r/ur_calibrated_pose"/>
-    <param name="cmd_topic"  value="/mur620b/UR10_r/twist_controller/command_collision_free"/>
+    <param name="pose_topic" value="/mur620b/UR10_l/ur_calibrated_pose"/>
+    <param name="cmd_topic"  value="/mur620b/UR10_l/twist_controller/command_collision_free"/>
 
     <!-- Bounds -->
     <param name="x_min" value="0.30"/>
-    <param name="x_max" value="0.90"/>
+    <param name="x_max" value="0.70"/>
     <param name="y_min" value="-0.0"/>
-    <param name="y_max" value="0.90"/>
+    <param name="y_max" value="0.70"/>
 
     <!-- Controls -->
     <param name="axis_x" value="0"/>
@@ -17,8 +17,8 @@
     <param name="deadzone" value="0.08"/>
 
     <!-- Dynamics -->
-    <param name="v_max" value="0.15"/>
-    <param name="a_max" value="0.40"/>
+    <param name="v_max" value="0.05"/>
+    <param name="a_max" value="0.50"/>
     <param name="rate_hz" value="100.0"/>
   </node>
 </launch>

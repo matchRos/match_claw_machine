@@ -81,7 +81,7 @@ class JoyToTwistBounded:
         if self.last_joy is None:
             self._publish_twist(0.0, 0.0)
             return
-
+        
         # Enable-Button (optional)
         if self.enable_btn >= 0:
             pressed = (self.enable_btn < len(self.last_joy.buttons) and self.last_joy.buttons[self.enable_btn] == 1)
@@ -105,6 +105,8 @@ class JoyToTwistBounded:
 
         # Grenzraum erzwingen
         v_cmd = self._enforce_bounds(v_cmd)
+        
+        print(f"Joy: ({ax:.2f}, {ay:.2f}) -> v_cmd: ({v_cmd[0]:.3f}, {v_cmd[1]:.3f})")
 
         self._publish_twist(v_cmd[0], v_cmd[1])
 

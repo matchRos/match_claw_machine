@@ -1,0 +1,13 @@
+<launch>
+  <node pkg="match_claw_machine" type="keyboard_to_joy.py" name="keyboard_to_joy" output="screen">
+    <param name="joy_topic" value="/joy"/>
+    <param name="axis_x_index" value="0"/>
+    <param name="axis_y_index" value="1"/>
+    <param name="enable_button_index" value="4"/>  <!-- -1 = kein Enable-Button -->
+    <param name="axes_count" value="8"/>
+    <param name="buttons_count" value="12"/>
+    <param name="rate_hz" value="50.0"/>
+    <param name="step" value="1.0"/>
+    <param name="decay" value="1.5"/>
+  </node>
+</launch>
