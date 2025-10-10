@@ -12,16 +12,19 @@ class KeyboardJoy:
         self.enable_btn  = rospy.get_param("~enable_button_index", -1)  # -1 = keiner
         self.axes_count  = rospy.get_param("~axes_count", 8)
         self.buttons_cnt = rospy.get_param("~buttons_count", 12)
+        self.enter_btn   = rospy.get_param("~enter_button_index", 5)
 
         # Dynamik
         self.rate_hz     = rospy.get_param("~rate_hz", 50.0)
         self.step        = rospy.get_param("~step", 1.0)     # Wert bei Tastendruck (-1/0/1)
         self.decay       = rospy.get_param("~decay", 5.25)   # pro Sek. Richtung -> 0 (gleitend)
+        self.enter_pulse_ms = rospy.get_param("~enter_pulse_ms", 120)
 
         # State
         self.ax = 0.0
         self.ay = 0.0
         self.enable_pressed = (self.enable_btn < 0)  # wenn kein Button, dann immer „an“
+        self.enter_pulse_until = rospy.Time(0)
 
         self.pub = rospy.Publisher(self.pub_topic, Joy, queue_size=10)
 
@@ -63,6 +66,11 @@ class KeyboardJoy:
                 elif c == 'e':
                     if self.enable_btn >= 0:
                         self.enable_pressed = not self.enable_pressed
+                # ...
+                elif c == '\r' or c == '\n':  # ENTER
+                    if 0 <= self.enter_btn < self.buttons_cnt:
+                        self.enter_pulse_until = rospy.Time.now() + rospy.Duration.from_sec(self.enter_pulse_ms / 1000.0)
+
                 # Pfeiltasten (falls Terminal sendet): \x1b[A etc.
                 elif ch == '\x1b':
                     seq = (sys.stdin.read(1) or '') + (sys.stdin.read(1) or '')
@@ -95,8 +103,16 @@ class KeyboardJoy:
         msg.buttons = [0] * self.buttons_cnt
         if 0 <= self.axis_x_idx < self.axes_count: msg.axes[self.axis_x_idx] = self.ax
         if 0 <= self.axis_y_idx < self.axes_count: msg.axes[self.axis_y_idx] = self.ay
+
+        # Enable-Button
         if self.enable_btn >= 0 and self.enable_btn < self.buttons_cnt:
             msg.buttons[self.enable_btn] = 1 if self.enable_pressed else 0
+
+        # ENTER-Button-Puls
+        if 0 <= self.enter_btn < self.buttons_cnt:
+            if rospy.Time.now() < self.enter_pulse_until:
+                msg.buttons[self.enter_btn] = 1
+
         self.pub.publish(msg)
 
     def run(self):
