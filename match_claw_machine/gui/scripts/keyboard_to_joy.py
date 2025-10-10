@@ -16,7 +16,7 @@ class KeyboardJoy:
         # Dynamik
         self.rate_hz     = rospy.get_param("~rate_hz", 50.0)
         self.step        = rospy.get_param("~step", 1.0)     # Wert bei Tastendruck (-1/0/1)
-        self.decay       = rospy.get_param("~decay", 1.25)   # pro Sek. Richtung -> 0 (gleitend)
+        self.decay       = rospy.get_param("~decay", 5.25)   # pro Sek. Richtung -> 0 (gleitend)
 
         # State
         self.ax = 0.0

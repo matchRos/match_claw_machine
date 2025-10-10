@@ -21,6 +21,7 @@ class JoyToTwistBounded:
         self.v_max      = rospy.get_param("~v_max", 0.15)        # m/s
         self.a_max      = rospy.get_param("~a_max", 0.40)        # m/s^2 (pro Achse)
         self.rate_hz    = rospy.get_param("~rate_hz", 100.0)
+        self.border_soft_zone = rospy.get_param("~border_soft_zone", 0.03)  # 3 cm
 
         # Workspace bounds (in Roboterbasis / frame des PoseTopics)
         self.x_min = rospy.get_param("~x_min", 0.30)
@@ -44,11 +45,11 @@ class JoyToTwistBounded:
     def cb_joy(self, msg: Joy):
         self.last_joy = msg
 
+
     def _apply_deadzone(self, val):
         return 0.0 if abs(val) < self.deadzone else val
 
     def _accel_limit(self, v_des, dt):
-        # pro Achse begrenzen
         out = [0.0, 0.0]
         for i in (0,1):
             dv = v_des[i] - self.v_prev[i]
@@ -56,23 +57,36 @@ class JoyToTwistBounded:
             if abs(dv) > max_step:
                 dv = max_step if dv > 0 else -max_step
             out[i] = self.v_prev[i] + dv
-        self.v_prev = out
         return out
 
-    def _enforce_bounds(self, v_xy):
-        """Wenn am Rand: verbiete Geschwindigkeit in Richtung 'weiter raus'."""
-        if self.last_pose is None:
-            return [0.0, 0.0]  # ohne Pose sicherheits-halber stehen
 
+    def _enforce_bounds(self, v_xy):
+        if self.last_pose is None:
+            return [0.0, 0.0]
         x = self.last_pose.position.x
         y = self.last_pose.position.y
-        vx, vy = v_xy
+        vx, vy = self.v_des
 
-        # Hart stoppen an den Grenzen
-        if x >= self.x_max and vx > 0: vx = 0.0
-        if x <= self.x_min and vx < 0: vx = 0.0
-        if y >= self.y_max and vy > 0: vy = 0.0
-        if y <= self.y_min and vy < 0: vy = 0.0
+        # weiche Rampe: skaliere Geschwindigkeit abhängig vom Restabstand zur Grenze
+        def scale_towards(limit_dist, v):
+            if limit_dist <= 0.0:
+                return 0.0
+            if limit_dist < self.border_soft_zone:
+                s = limit_dist / self.border_soft_zone
+                return v * s    # linear; bei Bedarf tanh(s*3)
+            return v
+
+        # rechts (x_max) / links (x_min)
+        if vx > 0:
+            vx = scale_towards(self.x_max - x, vx)
+        elif vx < 0:
+            vx = scale_towards(x - self.x_min, vx)
+
+        # oben (y_max) / unten (y_min)
+        if vy > 0:
+            vy = scale_towards(self.y_max - y, vy)
+        elif vy < 0:
+            vy = scale_towards(y - self.y_min, vy)
 
         return [vx, vy]
 
@@ -94,21 +108,24 @@ class JoyToTwistBounded:
         ax = self.last_joy.axes[self.axis_x] if self.axis_x < len(self.last_joy.axes) else 0.0
         ay = self.last_joy.axes[self.axis_y] if self.axis_y < len(self.last_joy.axes) else 0.0
 
-        ax = self._apply_deadzone(ax)
-        ay = self._apply_deadzone(ay)
+        #ax = self._apply_deadzone(ax)
+        #ay = self._apply_deadzone(ay)
+
+        # TEMP!!!!!
+        if ax > 0.05: ax_adj = 1.0
+        elif ax < -0.05: ax_adj = -1.0
+        else: ax_adj = 0.0
+        if ay > 0.05: ay_adj = 1.0
+        elif ay < -0.05: ay_adj = -1.0
+        else: ay_adj = 0.0
 
         # Mapping Joystick -> gewünschte v (XY)
-        v_des = [ax * self.v_max, ay * self.v_max]
-
-        # Beschleunigungsbegrenzung
-        v_cmd = self._accel_limit(v_des, dt)
-
-        # Grenzraum erzwingen
-        v_cmd = self._enforce_bounds(v_cmd)
-        
-        print(f"Joy: ({ax:.2f}, {ay:.2f}) -> v_cmd: ({v_cmd[0]:.3f}, {v_cmd[1]:.3f})")
-
+        self.v_des = [ax_adj * self.v_max, ay_adj * self.v_max]
+        self.v_des = self._enforce_bounds(self.v_des)        # erst Grenzraum erzwingen
+        v_cmd = self.v_des#self._accel_limit(self.v_des, dt)       # dann sanft beschleunigen
+        self.v_prev = v_cmd[:]                     # jetzt internen Zustand aktualisieren
         self._publish_twist(v_cmd[0], v_cmd[1])
+
 
     def _publish_twist(self, vx, vy):
         msg = Twist()
