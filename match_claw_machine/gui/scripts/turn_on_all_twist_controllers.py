@@ -22,14 +22,14 @@ class TurnOnAllTwistControllers:
     def turn_on_twist_controllers(self):
         for robot_name in self.robot_names:
             for UR_prefix in self.UR_prefixes:
-                load_controller_client = rospy.ServiceProxy(robot_name + "/" + UR_prefix + "/controller_manager/load_controller", LoadController)
-                rospy.loginfo("Waiting for " + robot_name + "/" + UR_prefix + "/controller_manager/load_controller")
-                load_controller_client.wait_for_service()
-                rospy.loginfo("Loading " + self.controller_name + " for " + robot_name + "/" + UR_prefix)
-                load_controller_request = LoadControllerRequest()
-                load_controller_request.name = self.controller_name
-                load_controller_client(load_controller_request)
-                rospy.loginfo("Loaded " + self.controller_name + " for " + robot_name + "/" + UR_prefix)
+                # load_controller_client = rospy.ServiceProxy(robot_name + "/" + UR_prefix + "/controller_manager/load_controller", LoadController)
+                # rospy.loginfo("Waiting for " + robot_name + "/" + UR_prefix + "/controller_manager/load_controller")
+                # #load_controller_client.wait_for_service()
+                # rospy.loginfo("Loading " + self.controller_name + " for " + robot_name + "/" + UR_prefix)
+                # load_controller_request = LoadControllerRequest()
+                # load_controller_request.name = self.controller_name
+                # load_controller_client(load_controller_request)
+                # rospy.loginfo("Loaded " + self.controller_name + " for " + robot_name + "/" + UR_prefix)
 
 
                 switch_controller_client = rospy.ServiceProxy(robot_name + "/" + UR_prefix + "/controller_manager/switch_controller", SwitchController)

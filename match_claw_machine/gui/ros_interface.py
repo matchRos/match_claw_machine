@@ -7,7 +7,7 @@ LAUNCH_ENABLE_UR = "enable_all_URs.launch"  # ggf. an deinen Launch-Namen anpass
 
 # NEU: exakte Launch-Dateien für Controller-Switch
 LAUNCH_TO_TWIST = "turn_on_all_twist_controllers.launch"
-LAUNCH_TO_ARM   = "turn_on_all_controllers.launch"
+LAUNCH_TO_ARM   = "turn_on_all_arm_controllers.launch"
 
 def _open_in_terminal(cmd: str):
     subprocess.Popen(["gnome-terminal", "--", "bash", "-c", f"{cmd}; exec bash"])
@@ -28,11 +28,11 @@ def launch_drivers(gui):
 def _move_to_initial_pose_for(robot: str, ur_prefix: str):
     move_group_name = "UR_arm_l" if ur_prefix == "UR10_l" else "UR_arm_r"
     if robot == "mur620c" and ur_prefix == "UR10_r":
-        home_position = "home_custom"
+        home_position = "Home_custom"
     elif robot in ["mur620a", "mur620b"]:
-        home_position = "home_custom"
+        home_position = "Home_custom"
     else:
-        home_position = "home_custom"
+        home_position = "Home_custom"
 
     cmd = (
         f"ROS_NAMESPACE={robot} roslaunch {PKG_UTIL} {LAUNCH_MOVE_HOME} "

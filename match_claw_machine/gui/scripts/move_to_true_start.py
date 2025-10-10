@@ -1,141 +1,104 @@
 #!/usr/bin/env python3
+
 import rospy
+from geometry_msgs.msg import PoseStamped, Twist
+from math import sqrt
+from tf.transformations import euler_from_quaternion, quaternion_from_euler
+import time
 import math
-from geometry_msgs.msg import PoseStamped, TwistStamped
-from std_msgs.msg import Header
+import subprocess
+import os
+import signal
+from datetime import datetime
+import tf.transformations as tft
 
-class StartPoseRegulator:
+
+class RobotMover:
     def __init__(self):
-        # --- Parameter ---
-        self.pose_topic   = rospy.get_param("~pose_topic", "/mur620x/UR10_x/ur_calibrated_pose")
-        self.cmd_topic    = rospy.get_param("~cmd_topic",  "/mur620x/UR10_x/twist_controller/command")
-        self.target_xyz   = rospy.get_param("~start_pos",  [0.500, 0.000, 0.300])  # [m]
-        self.pos_tol      = rospy.get_param("~pos_tol",    0.003)   # [m] Stopptoleranz
-        self.v_max        = rospy.get_param("~v_max",      0.15)    # [m/s] Max. Kart.-Geschwindigkeit
-        self.a_max        = rospy.get_param("~a_max",      0.40)    # [m/s^2] Kart.-Beschl.begrenzung (pro Achse via Skalar)
-        self.k_tanh       = rospy.get_param("~k_tanh",     3.0)     # Formfaktor für weiches Anfahren/Abbremsen
-        self.rate_hz      = rospy.get_param("~rate_hz",    100.0)   # [Hz]
-        self.timeout_s    = rospy.get_param("~pose_timeout_s", 0.5) # [s] Pose-Timeout
-        self.frame_id     = rospy.get_param("~frame_id",   "base_link")  # für TwistStamped Header
+        rospy.init_node('robot_mover', anonymous=True)
 
-        # --- Runtime ---
-        self.last_pose = None
-        self.last_pose_stamp = None
-        self.v_prev = [0.0, 0.0, 0.0]  # für Beschleunigungsbegrenzung
+        # Zielposition (Startposition des Roboters)
+        self.target_position = rospy.get_param('~start_pos', [0.33263377919966164, -0.028678860128717395, 0.6763138405651459])  # z.B. [x, y, z]
+        self.target_orientation = rospy.get_param('~start_orientation', [1.0, 0.0, 0.0, 0.0])  # Quaternion [x, y, z, w]
 
-        # --- ROS I/O ---
-        self.pub = rospy.Publisher(self.cmd_topic, TwistStamped, queue_size=10)
-        self.sub = rospy.Subscriber(self.pose_topic, PoseStamped, self.cb_pose, queue_size=10)
+        # Publisher für Twist
+        self.twist_pub = rospy.Publisher('/mur620b/UR10_l/twist_controller/command_collision_free', Twist, queue_size=10)
 
-    def cb_pose(self, msg: PoseStamped):
-        self.last_pose = msg.pose
-        self.last_pose_stamp = msg.header.stamp
+        # Subscriber für Pose
+        rospy.Subscriber('/mur620b/UR10_l/ur_calibrated_pose', PoseStamped, self.pose_callback)
 
-    @staticmethod
-    def _norm3(v):
-        return math.sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2])
+        self.current_pose = None
+        self.Kp, self.Ki, self.Kd = 0.8, 0.08, 0.1
+        
+        self.integral = 0
+        self.prev_error = 0
+        self.rate = rospy.Rate(100)  # 10 Hz
+        self.dt = 1/100.0  # Zeitintervall basierend auf der Rate
 
-    def _soft_speed(self, dist):
-        """
-        Weiche Geschwindigkeitsrampe:
-        v_cmd = v_max * tanh(k * dist)
-        - Für kleine Distanzen ~ linear
-        - Sättigt weich gegen v_max
-        """
-        return self.v_max * math.tanh(self.k_tanh * dist)
+    def pose_callback(self, msg):
+        self.current_pose = msg.pose
 
-    def _accel_limit(self, v_des, dt):
-        """
-        Skalarer Beschleunigungsbegrenzer auf die Kart-Geschwindigkeit.
-        Begrenze delta_v (als Vektornorm) auf a_max * dt.
-        """
-        dv = [v_des[0]-self.v_prev[0], v_des[1]-self.v_prev[1], v_des[2]-self.v_prev[2]]
-        dv_norm = self._norm3(dv)
-        max_step = max(1e-9, self.a_max * dt)
-        if dv_norm > max_step:
-            scale = max_step / dv_norm
-            dv = [dv[0]*scale, dv[1]*scale, dv[2]*scale]
-        v_out = [self.v_prev[0]+dv[0], self.v_prev[1]+dv[1], self.v_prev[2]+dv[2]]
-        self.v_prev = v_out
-        return v_out
+    def distance_to_target(self):
+        if self.current_pose is None:
+            return float('inf')
 
-    def step(self, dt):
-        # Pose verfügbar?
-        if self.last_pose is None:
-            return False, "waiting_for_pose"
+        dx = self.target_position[0] - self.current_pose.position.x
+        dy = self.target_position[1] - self.current_pose.position.y
+        dz = self.target_position[2] - self.current_pose.position.z
+        return sqrt(dx**2 + dy**2 + dz**2)
 
-        # Timeout prüfen
-        if (rospy.Time.now() - self.last_pose_stamp).to_sec() > self.timeout_s:
-            # Keine frische Pose -> auf Null gehen
-            self.v_prev = [0.0, 0.0, 0.0]
-            self._publish_twist([0.0, 0.0, 0.0])
-            return False, "pose_timeout"
 
-        # Positionsfehler
-        e = [
-            self.target_xyz[0] - self.last_pose.position.x,
-            self.target_xyz[1] - self.last_pose.position.y,
-            self.target_xyz[2] - self.last_pose.position.z,
-        ]
-        dist = self._norm3(e)
+    def move_to_start_fast(self, tolerance=0.0005):
 
-        # Ziel erreicht?
-        if dist <= self.pos_tol:
-            self.v_prev = [0.0, 0.0, 0.0]
-            self._publish_twist([0.0, 0.0, 0.0])
-            return True, "reached"
+        self.integral = 0
+        self.prev_error = 0
 
-        # Soll-Geschwindigkeit (weiche Rampe)
-        v_scalar = self._soft_speed(dist)
-        # Richtungseinheit
-        dir_vec = [e[0]/dist, e[1]/dist, e[2]/dist]
-        v_des = [dir_vec[0]*v_scalar, dir_vec[1]*v_scalar, dir_vec[2]*v_scalar]
+        while not rospy.is_shutdown():
+            if self.current_pose is None:
+                rospy.loginfo("Warte auf aktuelle Pose...")
+                self.rate.sleep()
+                continue
 
-        # Beschleunigungsbegrenzung
-        v_cmd = self._accel_limit(v_des, dt)
+            distance = self.distance_to_target()
 
-        # Publizieren (nur linear x,y,z; keine Orientierung)
-        self._publish_twist(v_cmd)
-        return False, "moving"
+            if distance < tolerance:
+                rospy.loginfo("Roboter ist in der Startposition.")
+                self.publish_zero_twist()
+                break
 
-    def _publish_twist(self, v):
-        msg = TwistStamped()
-        msg.header = Header()
-        msg.header.stamp = rospy.Time.now()
-        msg.header.frame_id = self.frame_id
-        msg.twist.linear.x = v[0]
-        msg.twist.linear.y = v[1]
-        msg.twist.linear.z = v[2]
-        # Winkelgeschwindigkeiten = 0
-        self.pub.publish(msg)
+            # Steuerung per Proportionalregelung
+            twist = Twist()
+            #twist.linear.x = 0.5 * (self.target_position[0] - self.current_pose.position.x)
+            twist.linear.x = self.update(self.target_position[0] - self.current_pose.position.x)
+            twist.linear.y = 0.5 * (self.target_position[1] - self.current_pose.position.y)
+            twist.linear.z = 0.5 * (self.target_position[2] - self.current_pose.position.z) 
 
-def main():
-    rospy.init_node("move_to_true_start", anonymous=True)
-    node = StartPoseRegulator()
-    rate = rospy.Rate(node.rate_hz)
-    last = rospy.Time.now()
-    reached_counter = 0  # kleine Hysterese für sauberes Stoppen
+            # Begrenzung der Geschwindigkeit
+            max_vel = 0.02  # m/s
+            twist.linear.x = max(-max_vel, min(twist.linear.x, max_vel))
+            twist.linear.y = max(-max_vel, min(twist.linear.y, max_vel))
+            twist.linear.z = max(-max_vel, min(twist.linear.z, max_vel))
 
-    while not rospy.is_shutdown():
-        now = rospy.Time.now()
-        dt = max(1e-3, (now - last).to_sec())
-        last = now
+            self.twist_pub.publish(twist)
+            self.rate.sleep()
 
-        reached, state = node.step(dt)
+    def update(self, error):
+        self.integral += error * self.dt
+        derivative = (error - self.prev_error) / self.dt
+        self.prev_error = error
+        return self.Kp*error + self.Ki*self.integral + self.Kd*derivative
 
-        if reached:
-            reached_counter += 1
-            if reached_counter >= int(0.3 * node.rate_hz):  # 0.3s innerhalb Toleranz
-                rospy.loginfo("Start position reached.")
-                # Optional: hier könnte man Node beenden:
-                # break
-        else:
-            reached_counter = 0
+    def publish_zero_twist(self):
+        stop_twist = Twist()
+        self.twist_pub.publish(stop_twist)
 
-        rate.sleep()
+  
+   
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     try:
-        main()
+        mover = RobotMover()
+        mover.move_to_start_fast()
+
     except rospy.ROSInterruptException:
         pass
