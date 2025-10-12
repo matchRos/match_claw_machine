@@ -31,7 +31,7 @@ class JoyToTwistBounded:
         self.y_max = rospy.get_param("~y_max",  0.40)
 
         # Z & Auto-Fahrt Parameter
-        self.z_down_m   = rospy.get_param("~z_down_m", 0.20)       # 20 cm runter
+        self.z_down_m   = rospy.get_param("~z_down_m", 0.36)       # 36 cm runter
         self.vz_max     = rospy.get_param("~vz_max", 0.10)         # m/s
         self.az_max     = rospy.get_param("~az_max", 0.30)         # m/s²
         self.pos_tol    = rospy.get_param("~pos_tol", 0.003)       # m (3D)
@@ -57,6 +57,10 @@ class JoyToTwistBounded:
         self.start_pose = None
         self.z_target = None
         self.dwell_until = rospy.Time(0)
+        self.Kp, self.Ki, self.Kd = 0.8, 0.08, 0.1
+        self.integral = 0
+        self.prev_error = 0
+        self.dt = 1.0 / self.rate_hz
 
         # DI 0 Überwachung
         self.di0_state = 0
@@ -246,7 +250,7 @@ class JoyToTwistBounded:
                 self.mode = "dwell"
                 self.dwell_until = rospy.Time.now() + rospy.Duration.from_sec(self.dwell_after_close_s)
                 return
-            vz_des = (self.vz_max if dz > 0 else -self.vz_max)
+            vz_des = self.update(dz) 
             vz_cmd = self._accel_limit_z(vz_des, dt)
             self.v_prev_z = vz_cmd
             self._publish(0.0, 0.0, vz_cmd)
@@ -336,6 +340,13 @@ class JoyToTwistBounded:
             self.v_prev_xyz = v_cmd[:]
             self._publish(v_cmd[0], v_cmd[1], v_cmd[2])
             return
+        
+    def update(self, error):
+        self.integral += error * self.dt
+        derivative = (error - self.prev_error) / self.dt
+        self.prev_error = error
+        print(self.Kp*error + self.Ki*self.integral + self.Kd*derivative)
+        return self.Kp*error + self.Ki*self.integral + self.Kd*derivative
 
 def main():
     rospy.init_node("joystick_to_twist_bounded", anonymous=True)
