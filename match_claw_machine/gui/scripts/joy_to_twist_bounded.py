@@ -57,7 +57,7 @@ class JoyToTwistBounded:
         self.start_pose = None
         self.z_target = None
         self.dwell_until = rospy.Time(0)
-        self.Kp, self.Ki, self.Kd = 0.8, 0.08, 0.1
+        self.Kp, self.Ki, self.Kd = 0.6, 0.06, 0.1
         self.integral = 0
         self.prev_error = 0
         self.dt = 1.0 / self.rate_hz
