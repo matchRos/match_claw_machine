@@ -2,14 +2,17 @@
 import rospy, math
 from geometry_msgs.msg import PoseStamped, Twist
 from sensor_msgs.msg import Joy
-from std_srvs.srv import Trigger, TriggerRequest
+from ur_msgs.srv import SetIO, SetIORequest
+from ur_msgs.msg import IOStates
 
 class JoyToTwistBounded:
     def __init__(self):
-        # Topics
-        self.joy_topic  = rospy.get_param("~joy_topic", "/joy")
-        self.pose_topic = rospy.get_param("~pose_topic", "/mur620b/UR10_r/ur_calibrated_pose")
-        self.cmd_topic  = rospy.get_param("~cmd_topic",  "/mur620b/UR10_r/twist_controller/command_collision_free")
+        # Topics (Robot spezifisch anpassen)
+        self.joy_topic   = rospy.get_param("~joy_topic", "/joy")
+        self.pose_topic  = rospy.get_param("~pose_topic", "/mur620b/UR10_l/ur_calibrated_pose")
+        self.cmd_topic   = rospy.get_param("~cmd_topic",  "/mur620b/UR10_l/twist_controller/command_collision_free")
+        self.io_srv_name = rospy.get_param("~set_io_service", "/mur620b/UR10_l/ur_hardware_interface/set_io")
+        self.io_states_topic = rospy.get_param("~io_states_topic", "/mur620b/UR10_l/ur_hardware_interface/io_states")
 
         # Axes/Buttons
         self.axis_x     = rospy.get_param("~axis_x", 0)
@@ -18,60 +21,80 @@ class JoyToTwistBounded:
         self.enter_btn  = rospy.get_param("~enter_button", 5)      # ENTER-Index (keyboard_to_joy)
 
         # XY Dynamik / Grenzen (nur im manuellen XY-Modus)
-        self.deadzone   = rospy.get_param("~deadzone", 0.08)
         self.v_max      = rospy.get_param("~v_max", 0.15)          # m/s (XY)
         self.a_max      = rospy.get_param("~a_max", 0.40)          # m/s² (XY)
         self.rate_hz    = rospy.get_param("~rate_hz", 100.0)
         self.border_soft_zone = rospy.get_param("~border_soft_zone", 0.03)
-
         self.x_min = rospy.get_param("~x_min", 0.30)
         self.x_max = rospy.get_param("~x_max", 0.90)
-        self.y_min = rospy.get_param("~y_min", -0.00)
+        self.y_min = rospy.get_param("~y_min", -0.40)
         self.y_max = rospy.get_param("~y_max",  0.40)
 
         # Z & Auto-Fahrt Parameter
         self.z_down_m   = rospy.get_param("~z_down_m", 0.20)       # 20 cm runter
         self.vz_max     = rospy.get_param("~vz_max", 0.10)         # m/s
         self.az_max     = rospy.get_param("~az_max", 0.30)         # m/s²
-        self.pos_tol    = rospy.get_param("~pos_tol", 0.003)       # m (Ziel-Toleranz 3D)
+        self.pos_tol    = rospy.get_param("~pos_tol", 0.003)       # m (3D)
 
-        # Sequenz: Greifer/Warteezeiten und Ziele
-        self.close_srv_name = rospy.get_param("~close_gripper_service", "/close_gripper")
-        self.open_srv_name  = rospy.get_param("~open_gripper_service",  "/open_gripper")
+        # Sequenz: Ziele / Wartezeiten
+        self.drop_pos   = rospy.get_param("~drop_pos", [0.70, 0.00, 0.40])  # [x,y,z]
         self.dwell_after_close_s = rospy.get_param("~dwell_after_close_s", 2.0)
         self.dwell_after_open_s  = rospy.get_param("~dwell_after_open_s", 1.0)
-        self.drop_pos = rospy.get_param("~drop_pos", [0.90, 0.00, 0.40])  # [x,y,z]
+
+        # UR I/O Pins
+        self.enable_pin    = rospy.get_param("~enable_pin", 1)      # muss 1 sein zum Bewegen
+        self.gripper_pin   = rospy.get_param("~gripper_pin", 0)     # 0=open, 1=close
+        self.sensor_di_pin = rospy.get_param("~sensor_di_pin", 0)   # digital input 0
 
         # Internals
         self.last_pose = None
         self.last_joy  = None
         self.v_prev_xy = [0.0, 0.0]
         self.v_prev_z  = 0.0
-        self.v_prev_xyz = [0.0, 0.0, 0.0]  # für Auto-Fahrten
+        self.v_prev_xyz = [0.0, 0.0, 0.0]
         self.enter_prev = 0
-
-        self.mode = "xy"            # "xy" | "descend" | "dwell" | "ascend" | "to_drop" | "open_dwell" | "to_home"
-        self.start_pose = None       # (x0,y0,z0) gemerkt beim ENTER
+        self.mode = "xy"            # "xy" | "descend" | "dwell" | "ascend" | "to_drop" | "detect_dwell" | "to_home"
+        self.start_pose = None
         self.z_target = None
         self.dwell_until = rospy.Time(0)
-        self.close_called = False
+
+        # DI 0 Überwachung
+        self.di0_state = 0
+        self.di0_prev  = 0
+        self.detect_window_until = rospy.Time(0)
+        self.detect_seen = False
 
         # ROS I/O
         self.pub  = rospy.Publisher(self.cmd_topic, Twist, queue_size=10)
         self.subj = rospy.Subscriber(self.joy_topic, Joy, self.cb_joy, queue_size=20)
         self.subp = rospy.Subscriber(self.pose_topic, PoseStamped, self.cb_pose, queue_size=20)
+        self.subio= rospy.Subscriber(self.io_states_topic, IOStates, self.cb_io, queue_size=50)
 
-        # Services
-        self.close_srv = rospy.ServiceProxy(self.close_srv_name, Trigger)
-        self.open_srv  = rospy.ServiceProxy(self.open_srv_name,  Trigger)
+        # Service-Proxy
+        rospy.wait_for_service(self.io_srv_name)
+        self.set_io = rospy.ServiceProxy(self.io_srv_name, SetIO)
 
+    # ---------- Callbacks ----------
     def cb_pose(self, msg: PoseStamped):
         self.last_pose = msg.pose
 
     def cb_joy(self, msg: Joy):
         self.last_joy = msg
 
-    # --------- Helpers ----------
+    def cb_io(self, msg: IOStates):
+        # suche digitalen Eingang mit gewünschtem Pin
+        val = 0
+        for din in msg.digital_in_states:
+            if din.pin == self.sensor_di_pin:
+                val = 1 if din.state else 0
+                break
+        # rising edge während Erkennungsfenster?
+        if self.di0_prev == 0 and val == 1 and rospy.Time.now() <= self.detect_window_until:
+            self.detect_seen = True
+        self.di0_prev = val
+        self.di0_state = val
+
+    # ---------- Helpers ----------
     def _accel_limit_xy(self, v_des, dt):
         out = [0.0, 0.0]
         for i in (0,1):
@@ -88,7 +111,6 @@ class JoyToTwistBounded:
         return self.v_prev_z + dv
 
     def _accel_limit_xyz_auto(self, v_des, dt):
-        """Beschränke Auto-Fahrt (3D) pro Achse getrennt: XY nutzt a_max, Z nutzt az_max."""
         out = [0.0, 0.0, 0.0]
         a_limits = [self.a_max, self.a_max, self.az_max]
         for i in (0,1,2):
@@ -131,6 +153,35 @@ class JoyToTwistBounded:
         self.enter_prev = now_val
         return rising
 
+    # ----- UR I/O -----
+    def _set_do(self, pin, state):
+        req = SetIORequest()
+        req.fun = SetIORequest.FUN_SET_DIGITAL_OUT
+        req.pin = pin
+        req.state = float(1.0 if state else 0.0)
+        return self.set_io(req)
+
+    def _enable_gripper_io(self):
+        try:
+            self._set_do(self.enable_pin, 1)
+        except Exception as e:
+            rospy.logwarn("Enable pin failed: %s", e)
+
+    def _gripper_close(self):
+        self._enable_gripper_io()
+        try:
+            self._set_do(self.gripper_pin, 1)  # 1 = geschlossen
+        except Exception as e:
+            rospy.logwarn("Close gripper DO failed: %s", e)
+
+    def _gripper_open(self):
+        self._enable_gripper_io()
+        try:
+            self._set_do(self.gripper_pin, 0)  # 0 = offen
+        except Exception as e:
+            rospy.logwarn("Open gripper DO failed: %s", e)
+
+    # ----- Sequence helpers -----
     def _start_sequence(self):
         if self.last_pose is None:
             rospy.logwarn("No pose yet; cannot start sequence.")
@@ -142,14 +193,9 @@ class JoyToTwistBounded:
         self.v_prev_xy = [0.0, 0.0]
         self.v_prev_z  = 0.0
         self.v_prev_xyz = [0.0, 0.0, 0.0]
-        self.close_called = False
         rospy.loginfo("Sequence start: descend to z=%.3f", self.z_target)
 
-    def _at_target(self, cur, tgt):
-        dx, dy, dz = tgt[0]-cur[0], tgt[1]-cur[1], tgt[2]-cur[2]
-        return math.sqrt(dx*dx + dy*dy + dz*dz) <= self.pos_tol
-
-    # --------- Main step ----------
+    # ---------- Main ----------
     def step(self, dt):
         # Start per ENTER
         if self.mode == "xy" and self._enter_pressed():
@@ -169,8 +215,6 @@ class JoyToTwistBounded:
 
             ax = self.last_joy.axes[self.axis_x] if self.axis_x < len(self.last_joy.axes) else 0.0
             ay = self.last_joy.axes[self.axis_y] if self.axis_y < len(self.last_joy.axes) else 0.0
-
-            # simples Snapping (wie bei dir)
             ax_adj = 1.0 if ax > 0.05 else (-1.0 if ax < -0.05 else 0.0)
             ay_adj = 1.0 if ay > 0.05 else (-1.0 if ay < -0.05 else 0.0)
 
@@ -197,14 +241,8 @@ class JoyToTwistBounded:
                 self.v_prev_z = 0.0
                 self._publish(0.0, 0.0, 0.0)
                 # Greifer schließen
-                if not self.close_called:
-                    try:
-                        rospy.wait_for_service(self.close_srv_name, timeout=2.0)
-                        self.close_srv(TriggerRequest())
-                        rospy.loginfo("Close gripper called.")
-                    except Exception as e:
-                        rospy.logwarn("Close gripper failed: %s", e)
-                    self.close_called = True
+                self._gripper_close()
+                # Wartezeit nach Close
                 self.mode = "dwell"
                 self.dwell_until = rospy.Time.now() + rospy.Duration.from_sec(self.dwell_after_close_s)
                 return
@@ -239,7 +277,7 @@ class JoyToTwistBounded:
             self._publish(0.0, 0.0, vz_cmd)
             return
 
-        # --- Fahrt zur Ablageposition (3D, mit Accel-Limit) ---
+        # --- Fahrt zur Ablageposition (3D) ---
         if self.mode == "to_drop":
             tgt = self.drop_pos
             e = [tgt[0]-px, tgt[1]-py, tgt[2]-pz]
@@ -247,17 +285,15 @@ class JoyToTwistBounded:
             if dist <= self.pos_tol:
                 self.v_prev_xyz = [0.0, 0.0, 0.0]
                 self._publish(0.0, 0.0, 0.0)
-                # Greifer öffnen + kurze Wartezeit
-                try:
-                    rospy.wait_for_service(self.open_srv_name, timeout=2.0)
-                    self.open_srv(TriggerRequest())
-                    rospy.loginfo("Open gripper called.")
-                except Exception as e:
-                    rospy.logwarn("Open gripper failed: %s", e)
-                self.mode = "open_dwell"
-                self.dwell_until = rospy.Time.now() + rospy.Duration.from_sec(self.dwell_after_open_s)
+                # Greifer öffnen + Erkennungsfenster starten
+                self._gripper_open()
+                self.detect_seen = False
+                self.detect_window_until = rospy.Time.now() + rospy.Duration.from_sec(2.0)  # 2s Fenster
+                # Dwell (mind. dwell_after_open_s, überlappt mit Detect)
+                base = rospy.Time.now() + rospy.Duration.from_sec(self.dwell_after_open_s)
+                self.dwell_until = max(base, self.detect_window_until)
+                self.mode = "detect_dwell"
                 return
-            # gewünschte Geschwindigkeit in Richtung Ziel, begrenzt auf v_max/vz_max
             v_des = [
                 self.v_max * (e[0]/dist) if dist > 1e-6 else 0.0,
                 self.v_max * (e[1]/dist) if dist > 1e-6 else 0.0,
@@ -268,15 +304,19 @@ class JoyToTwistBounded:
             self._publish(v_cmd[0], v_cmd[1], v_cmd[2])
             return
 
-        # --- kurze Wartezeit nach Öffnen, dann zurück zur Ausgangsposition ---
-        if self.mode == "open_dwell":
+        # --- Detektions-Dwell: DI0 überwachen ---
+        if self.mode == "detect_dwell":
             self.v_prev_xyz = [0.0, 0.0, 0.0]
             self._publish(0.0, 0.0, 0.0)
             if rospy.Time.now() >= self.dwell_until:
+                if self.detect_seen:
+                    rospy.loginfo("Objekt erkannt (DI%d ging HIGH).", self.sensor_di_pin)
+                else:
+                    rospy.loginfo("Kein Objekt erkannt (DI%d blieb LOW).", self.sensor_di_pin)
                 self.mode = "to_home"
-                rospy.loginfo("Going back to start pose.")
             return
 
+        # --- Zurück zur Ausgangsposition ---
         if self.mode == "to_home":
             tgt = self.start_pose
             e = [tgt[0]-px, tgt[1]-py, tgt[2]-pz]
