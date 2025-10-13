@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
+from tokenize import String
 import rospy, math, random, subprocess
 from geometry_msgs.msg import PoseStamped, Twist
 from ur_msgs.srv import SetIO, SetIORequest
 from ur_msgs.msg import IOStates
-from std_msgs.msg import Float32
+from std_msgs.msg import Float32, String
 
 class LbDCycleRunner:
     def __init__(self):
@@ -16,7 +17,7 @@ class LbDCycleRunner:
         # ---------- Workspace / Ziele ----------
         self.image_capture_pos = [0.50, 0.30, 0.70]
         self.drop_pos          = [0.70, 0.00, 0.40]
-        self.z_pick            = rospy.get_param("~z_pick", 0.40)   # m im Frame der Pose
+        self.z_pick            = rospy.get_param("~z_pick", 0.40)   
         self.x_min = rospy.get_param("~x_min", 0.40)
         self.x_max = rospy.get_param("~x_max", 0.50)
         self.y_min = rospy.get_param("~y_min", -0.20)
@@ -46,7 +47,7 @@ class LbDCycleRunner:
 
         # --- PID (Z-Regler) ---
         self.Kp = rospy.get_param("~pid_kp", 0.6)
-        self.Ki = rospy.get_param("~pid_ki", 0.06)
+        self.Ki = rospy.get_param("~pid_ki", 0.05)
         self.Kd = rospy.get_param("~pid_kd", 0.10)
         self.pid_int = [0.0, 0.0, 0.0]
         self.pid_prev = [0.0, 0.0, 0.0]
@@ -102,15 +103,7 @@ class LbDCycleRunner:
     def _gripper_open(self):   self._gripper_enable(); self._set_do(self.gripper_pin, 0)
     def _gripper_close(self):  self._gripper_enable(); self._set_do(self.gripper_pin, 1)
 
-    def _read_rg2_width_mm(self):
-        if self.rg2_width_topic and self.width_mm is not None:
-            return self.width_mm
-        if self.last_io:
-            for ain in self.last_io.analog_in_states:
-                if ain.pin == self.rg2_ai_pin:
-                    return self.rg2_ai_mm_per_volt * float(ain.state) + self.rg2_ai_offset_mm
-        return None
-    
+
     def update(self, e):
         v = [0.0, 0.0, 0.0]
         limits = [self.v_max, self.v_max, self.vz_max]
@@ -137,16 +130,18 @@ class LbDCycleRunner:
         # 1) Zur ImageCapture-Position
         if self.mode == "to_image":
             tgt = self.image_capture_pos
-
             e = [tgt[0]-px, tgt[1]-py, tgt[2]-pz]
-            print("Error:", e)
-            print("Pose:", px, py, pz)
-
             dist = math.sqrt(e[0]**2+e[1]**2+e[2]**2)
             if dist <= self.pos_tol:
                 self.pid_integral = 0.0
                 self.pid_prev_error = 0.0
                 self.v_prev = [0,0,0]; self._publish(0,0,0)
+                # Greifer öffnen
+                try:
+                    self._gripper_open()
+                    rospy.sleep(0.2)  # kurze Settling-Zeit für I/Os
+                except Exception as e:
+                    rospy.logwarn("Open gripper before capture failed: %s", e)
                 try:
                     subprocess.run(["bash","-lc", "~/imitationCV/.venv/bin/python3 "+self.capture_script], check=True)
                 except Exception as e:
@@ -156,14 +151,8 @@ class LbDCycleRunner:
                                 random.uniform(self.y_min, self.y_max)]
                 self.mode = "to_rand_xy"
                 return
-            # v_des = [ self.v_max*(e[0]/max(dist,1e-6)),
-            #           self.v_max*(e[1]/max(dist,1e-6)),
-            #           self.vz_max*(e[2]/max(dist,1e-6)) ]
-            # v_cmd = self._accel_limit(v_des, dt); self.v_prev = v_cmd[:]
-            v_cmd = self.update(e)                      # <- PID-Ausgabe [m/s]     
-            print("Cmd:", v_cmd)   
+            v_cmd = self.update(e)                      # <- PID-Ausgabe [m/s]       
             self.v_prev = v_cmd[:]
-
             self._publish(*v_cmd); 
             return
 
@@ -189,17 +178,11 @@ class LbDCycleRunner:
                 # Greifer schließen und Erfolg prüfen
                 try: self._gripper_close()
                 except Exception as e: rospy.logwarn("Close DO failed: %s", e)
-                rospy.sleep(0.2)  # kurzes Einklemmen
-                width = self._read_rg2_width_mm()
-                if width is not None and width < self.empty_thresh_mm:
-                    rospy.loginfo("Leer gegriffen (RG2 %.2f mm < %.2f).", width, self.empty_thresh_mm)
-                    self.mode = "ascend"   # direkt hoch, kein Drop
-                else:
-                    self.mode = "ascend_to_drop"
-                return
+                rospy.sleep(0.5)  # kurzes Einklemmen
             vz = self.vz_max if dz > 0 else -self.vz_max
             v_cmd = self._accel_limit([0.0,0.0,vz], dt); self.v_prev = v_cmd[:]
-            self._publish(0.0, 0.0, v_cmd[2]); return
+            self._publish(0.0, 0.0, v_cmd[2])
+            return
 
         # 4) Hoch zurück auf Start-Z (ImageCapture Z)
         if self.mode in ("ascend","ascend_to_drop"):

@@ -5,8 +5,8 @@
 
     <param name="x_min" value="0.30"/><param name="x_max" value="0.90"/>
     <param name="y_min" value="-0.40"/><param name="y_max" value="0.40"/>
-    <param name="z_pick" value="0.30"/>
-    <param name="pos_tol" value="0.001"/>
+    <param name="z_pick" value="0.40"/>
+    <param name="pos_tol" value="0.01"/>
 
     <param name="set_io_service" value="/mur620b/UR10_l/ur_hardware_interface/set_io"/>
     <param name="io_states_topic" value="/mur620b/UR10_l/ur_hardware_interface/io_states"/>
