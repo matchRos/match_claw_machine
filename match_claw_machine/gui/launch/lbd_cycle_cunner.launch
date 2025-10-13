@@ -1,0 +1,22 @@
+<launch>
+  <node pkg="match_claw_machine" type="lbd_cycle_runner.py" name="lbd_cycle_runner" output="screen">
+    <param name="pose_topic" value="/mur620b/UR10_l/ur_calibrated_pose"/>
+    <param name="cmd_topic"  value="/mur620b/UR10_l/twist_controller/command_collision_free"/>
+
+    <param name="x_min" value="0.30"/><param name="x_max" value="0.90"/>
+    <param name="y_min" value="-0.40"/><param name="y_max" value="0.40"/>
+    <param name="z_pick" value="0.30"/>
+    <param name="pos_tol" value="0.001"/>
+
+    <param name="set_io_service" value="/mur620b/UR10_l/ur_hardware_interface/set_io"/>
+    <param name="io_states_topic" value="/mur620b/UR10_l/ur_hardware_interface/io_states"/>
+    <!-- Falls vorhanden: -->
+    <!-- <param name="rg2_width_topic" value="/rg2/width_mm"/> -->
+    <!-- oder Analog-In: -->
+    <param name="rg2_ai_pin" value="0"/>
+    <param name="rg2_ai_mm_per_volt" value="40.0"/>
+    <param name="rg2_ai_offset_mm" value="0.0"/>
+    <param name="grip_empty_threshold_mm" value="2.0"/>
+
+  </node>
+</launch>
