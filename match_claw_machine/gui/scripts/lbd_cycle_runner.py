@@ -16,7 +16,7 @@ class LbDCycleRunner:
         # ---------- Workspace / Ziele ----------
         self.image_capture_pos = [0.50, 0.30, 0.70]
         self.drop_pos          = [0.70, 0.00, 0.40]
-        self.z_pick            = rospy.get_param("~z_pick", 0.30)   # m im Frame der Pose
+        self.z_pick            = rospy.get_param("~z_pick", 0.40)   # m im Frame der Pose
         self.x_min = rospy.get_param("~x_min", 0.40)
         self.x_max = rospy.get_param("~x_max", 0.50)
         self.y_min = rospy.get_param("~y_min", -0.20)
@@ -28,7 +28,7 @@ class LbDCycleRunner:
         self.vz_max  = rospy.get_param("~vz_max", 0.10)     # Z  m/s
         self.a_max   = rospy.get_param("~a_max", 0.40)      # XY m/s^2
         self.az_max  = rospy.get_param("~az_max", 0.30)     # Z  m/s^2
-        self.pos_tol = rospy.get_param("~pos_tol", 0.001)   # 1 mm
+        self.pos_tol = rospy.get_param("~pos_tol", 0.01)   # 1 mm
 
         # ---------- Greifer / Erkennung ----------
         self.enable_pin    = rospy.get_param("~enable_pin", 1)    # DO enable
@@ -43,6 +43,15 @@ class LbDCycleRunner:
 
         # ---------- Capture ----------
         self.capture_script = "~/imitationCV/capture.py"
+
+        # --- PID (Z-Regler) ---
+        self.Kp = rospy.get_param("~pid_kp", 0.6)
+        self.Ki = rospy.get_param("~pid_ki", 0.06)
+        self.Kd = rospy.get_param("~pid_kd", 0.10)
+        self.pid_int = [0.0, 0.0, 0.0]
+        self.pid_prev = [0.0, 0.0, 0.0]
+        self.dt_fixed = 1.0 / self.rate_hz  # nominales dt für den PID (wie in deinem Beispiel)
+
 
         # ---------- State ----------
         self.last_pose = None
@@ -101,6 +110,22 @@ class LbDCycleRunner:
                 if ain.pin == self.rg2_ai_pin:
                     return self.rg2_ai_mm_per_volt * float(ain.state) + self.rg2_ai_offset_mm
         return None
+    
+    def update(self, e):
+        v = [0.0, 0.0, 0.0]
+        limits = [self.v_max, self.v_max, self.vz_max]
+
+        for i in (0, 1, 2):
+            self.pid_int[i] += e[i] * self.dt_fixed
+            d = (e[i] - self.pid_prev[i]) / self.dt_fixed
+            self.pid_prev[i] = e[i]
+            v[i] = self.Kp * e[i] + self.Ki * self.pid_int[i] + self.Kd * d
+            # Output-Clamp je Achse
+            if abs(v[i]) > limits[i]:
+                v[i] = math.copysign(limits[i], v[i])
+        return v
+
+
 
     # -------- Main Step --------
     def step(self, dt):
@@ -112,9 +137,15 @@ class LbDCycleRunner:
         # 1) Zur ImageCapture-Position
         if self.mode == "to_image":
             tgt = self.image_capture_pos
+
             e = [tgt[0]-px, tgt[1]-py, tgt[2]-pz]
+            print("Error:", e)
+            print("Pose:", px, py, pz)
+
             dist = math.sqrt(e[0]**2+e[1]**2+e[2]**2)
             if dist <= self.pos_tol:
+                self.pid_integral = 0.0
+                self.pid_prev_error = 0.0
                 self.v_prev = [0,0,0]; self._publish(0,0,0)
                 try:
                     subprocess.run(["bash","-lc", "~/imitationCV/.venv/bin/python3 "+self.capture_script], check=True)
@@ -125,11 +156,16 @@ class LbDCycleRunner:
                                 random.uniform(self.y_min, self.y_max)]
                 self.mode = "to_rand_xy"
                 return
-            v_des = [ self.v_max*(e[0]/max(dist,1e-6)),
-                      self.v_max*(e[1]/max(dist,1e-6)),
-                      self.vz_max*(e[2]/max(dist,1e-6)) ]
-            v_cmd = self._accel_limit(v_des, dt); self.v_prev = v_cmd[:]
-            self._publish(*v_cmd); return
+            # v_des = [ self.v_max*(e[0]/max(dist,1e-6)),
+            #           self.v_max*(e[1]/max(dist,1e-6)),
+            #           self.vz_max*(e[2]/max(dist,1e-6)) ]
+            # v_cmd = self._accel_limit(v_des, dt); self.v_prev = v_cmd[:]
+            v_cmd = self.update(e)                      # <- PID-Ausgabe [m/s]     
+            print("Cmd:", v_cmd)   
+            self.v_prev = v_cmd[:]
+
+            self._publish(*v_cmd); 
+            return
 
 
         # 2) Nur XY zur Zufallsposition (Z beibehalten)
