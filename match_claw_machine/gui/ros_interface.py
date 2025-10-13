@@ -9,6 +9,8 @@ LAUNCH_ENABLE_UR = "enable_all_URs.launch"
 LAUNCH_TO_TWIST = "turn_on_all_twist_controllers.launch"
 LAUNCH_TO_ARM   = "turn_on_all_arm_controllers.launch"
 LAUNCH_TRUE_START = "move_to_true_start.launch"  
+LAUNCH_KEYBOARD_TO_JOY = "keyboard_to_joy.launch"
+LAUNCH_JOY_TO_TWIST = "joy_to_twist_bounded.launch"
 
 def _open_in_terminal(cmd: str):
     subprocess.Popen(["gnome-terminal", "--", "bash", "-c", f"{cmd}; exec bash"])
@@ -120,4 +122,30 @@ def start_move_to_true_start(gui):
                 f"pose_topic:={pose_topic} cmd_topic:={cmd_topic}"
             )
             print(f"[true-start] {robot}/{ur}: {cmd}")
+            _open_in_terminal(cmd)
+
+def keyboard_to_joy(gui):
+    
+    cmd = (
+        f"roslaunch {PKG_UTIL} {LAUNCH_KEYBOARD_TO_JOY} "
+    )
+    print(f"[keyboard-to-joy]: {cmd}")
+    _open_in_terminal(cmd)
+
+def joy_to_twist(gui):
+    selected_robots = gui.get_selected_robots()
+    selected_urs = gui.get_selected_urs()
+    if not selected_robots or not selected_urs:
+        print("Keine Roboter/URs selektiert.")
+        return
+
+    for robot in selected_robots:
+        for ur in selected_urs:
+            pose_topic = f"/{robot}/{ur}/ur_calibrated_pose"
+            cmd_topic  = f"/{robot}/{ur}/twist"  # laut Vorgabe: Twist (nicht -stamped)
+            cmd = (
+                f"ROS_NAMESPACE={robot} roslaunch {PKG_UTIL} {LAUNCH_JOY_TO_TWIST} "
+                f"pose_topic:={pose_topic} cmd_topic:={cmd_topic}"
+            )
+            print(f"[joy-to-twist] {robot}/{ur}: {cmd}")
             _open_in_terminal(cmd)

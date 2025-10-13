@@ -7,6 +7,8 @@ from ros_interface import (
     switch_to_arm_controller,
     enable_selected_urs,
     start_move_to_true_start,
+    keyboard_to_joy,
+    joy_to_twist
 )
 
 class ROSGui(QWidget):
@@ -79,6 +81,18 @@ class ROSGui(QWidget):
         btn_true_start.clicked.connect(lambda: start_move_to_true_start(self))
         row4.addWidget(btn_true_start)
         root.addLayout(row4)
+
+        row5 = QHBoxLayout()
+        btn_true_start = QPushButton("Emulate Joystick through Keyboard")
+        btn_true_start.clicked.connect(lambda: keyboard_to_joy(self))
+        row5.addWidget(btn_true_start)
+        root.addLayout(row5)
+
+        row6 = QHBoxLayout()
+        btn_true_start = QPushButton("Emulate Twist through Joystick")
+        btn_true_start.clicked.connect(lambda: joy_to_twist(self))
+        row6.addWidget(btn_true_start)
+        root.addLayout(row6)
 
 
         note = JLabelCentered("Startet Treiber, Initialpose und Controller-Wechsel je Robot/UR.")
