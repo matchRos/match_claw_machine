@@ -15,15 +15,15 @@ class JoyToTwistBounded:
         self.io_states_topic = rospy.get_param("~io_states_topic", "/mur620b/UR10_l/ur_hardware_interface/io_states")
 
         # Axes/Buttons
-        self.axis_x     = rospy.get_param("~axis_x", 0)
-        self.axis_y     = rospy.get_param("~axis_y", 1)
+        self.axis_x     = rospy.get_param("~axis_x", 1)
+        self.axis_y     = rospy.get_param("~axis_y", 0)
         self.enable_btn = rospy.get_param("~enable_button", -1)    # -1: immer aktiv
-        self.enter_btn  = rospy.get_param("~enter_button", 5)      # ENTER-Index (keyboard_to_joy)
+        self.enter_btn  = rospy.get_param("~enter_button", 3)      # ENTER-Index (keyboard_to_joy)
 
         # XY Dynamik / Grenzen (nur im manuellen XY-Modus)
         self.v_max      = rospy.get_param("~v_max", 0.15)          # m/s (XY)
         self.a_max      = rospy.get_param("~a_max", 0.40)          # m/s² (XY)
-        self.rate_hz    = rospy.get_param("~rate_hz", 100.0)
+        self.rate_hz    = rospy.get_param("~rate_hz", 200.0)
         self.border_soft_zone = rospy.get_param("~border_soft_zone", 0.03)
         self.x_min = rospy.get_param("~x_min", 0.30)
         self.x_max = rospy.get_param("~x_max", 0.90)
@@ -31,9 +31,11 @@ class JoyToTwistBounded:
         self.y_max = rospy.get_param("~y_max",  0.40)
 
         # Z & Auto-Fahrt Parameter
-        self.z_down_m   = rospy.get_param("~z_down_m", 0.36)       # 36 cm runter
-        self.vz_max     = rospy.get_param("~vz_max", 0.10)         # m/s
-        self.az_max     = rospy.get_param("~az_max", 0.30)         # m/s²
+        self.z_down_m   = rospy.get_param("~z_down_m", 0.33)       # 36 cm runter
+        self.vz_max     = rospy.get_param("~vz_max", 0.08)         # m/s
+        self.az_max     = rospy.get_param("~az_max", 0.40)         # m/s²
+        self.j_max      = 10.0     # xy [m/s^3], Beispiel
+        self.jz_max     = 5.0      # z  [m/s^3]
         self.pos_tol    = rospy.get_param("~pos_tol", 0.003)       # m (3D)
 
         # Sequenz: Ziele / Wartezeiten
@@ -52,12 +54,13 @@ class JoyToTwistBounded:
         self.v_prev_xy = [0.0, 0.0]
         self.v_prev_z  = 0.0
         self.v_prev_xyz = [0.0, 0.0, 0.0]
+        self.a_prev_xyz = [0.0, 0.0, 0.0]
         self.enter_prev = 0
         self.mode = "xy"            # "xy" | "descend" | "dwell" | "ascend" | "to_drop" | "detect_dwell" | "to_home"
         self.start_pose = None
         self.z_target = None
         self.dwell_until = rospy.Time(0)
-        self.Kp, self.Ki, self.Kd = 0.6, 0.06, 0.1
+        self.Kp, self.Ki, self.Kd = 0.6, 0.02, 0.1
         self.integral = 0
         self.prev_error = 0
         self.dt = 1.0 / self.rate_hz
@@ -107,6 +110,41 @@ class JoyToTwistBounded:
             if abs(dv) > max_step: dv = math.copysign(max_step, dv)
             out[i] = self.v_prev_xy[i] + dv
         return out
+    
+    def _accel_jerk_limit_xyz(self, v_des, dt):
+        """Jerk- und Beschl.-begrenzter Geschwindigkeitsfilter (C2-stetig)."""
+        if dt <= 0.0:
+            return list(self.v_prev_xyz)
+
+        out = [0.0, 0.0, 0.0]
+        a_limits = [self.a_max, self.a_max, self.az_max]
+        j_limits = [self.j_max, self.j_max, self.jz_max]
+
+        for i in (0, 1, 2):
+            # gewünschte Beschleunigung, um v_des in einem Schritt zu erreichen
+            a_req = (v_des[i] - self.v_prev_xyz[i]) / dt
+
+            # Schritt der Beschleunigung per Ruck limitieren
+            da = a_req - self.a_prev_xyz[i]
+            max_da = j_limits[i] * dt
+            if abs(da) > max_da:
+                da = math.copysign(max_da, da)
+            a_new = self.a_prev_xyz[i] + da
+
+            # Beschleunigung klemmen
+            a_max = a_limits[i]
+            if a_new >  a_max: a_new =  a_max
+            if a_new < -a_max: a_new = -a_max
+
+            # Integration auf Geschwindigkeit
+            v_new = self.v_prev_xyz[i] + a_new * dt
+
+            out[i] = v_new
+            self.a_prev_xyz[i] = a_new
+
+        self.v_prev_xyz = out
+        return out
+
 
     def _accel_limit_z(self, vz_des, dt):
         dv = vz_des - self.v_prev_z
@@ -217,14 +255,15 @@ class JoyToTwistBounded:
                 self._publish(0.0, 0.0, 0.0)
                 return
 
-            ax = self.last_joy.axes[self.axis_x] if self.axis_x < len(self.last_joy.axes) else 0.0
-            ay = self.last_joy.axes[self.axis_y] if self.axis_y < len(self.last_joy.axes) else 0.0
+            ax = -self.last_joy.axes[self.axis_x] if self.axis_x < len(self.last_joy.axes) else 0.0
+            ay = -self.last_joy.axes[self.axis_y] if self.axis_y < len(self.last_joy.axes) else 0.0
             ax_adj = 1.0 if ax > 0.05 else (-1.0 if ax < -0.05 else 0.0)
             ay_adj = 1.0 if ay > 0.05 else (-1.0 if ay < -0.05 else 0.0)
 
             v_des = [ax_adj * self.v_max, ay_adj * self.v_max]
             v_des = self._enforce_bounds(v_des)
-            v_cmd = self._accel_limit_xy(v_des, dt)
+            v_des = [v_des[0], v_des[1], 0.0]
+            v_cmd = self._accel_jerk_limit_xyz(v_des, dt)
             self.v_prev_xy = v_cmd[:]
             self._publish(v_cmd[0], v_cmd[1], 0.0)
             return
@@ -244,6 +283,8 @@ class JoyToTwistBounded:
             if abs(dz) <= self.pos_tol:
                 self.v_prev_z = 0.0
                 self._publish(0.0, 0.0, 0.0)
+                rospy.sleep(0.1)  # kurz warten
+                rospy.loginfo("Descend done -> closing gripper.")
                 # Greifer schließen
                 self._gripper_close()
                 # Wartezeit nach Close
@@ -342,10 +383,10 @@ class JoyToTwistBounded:
             return
         
     def update(self, error):
+        print("Error:", error)
         self.integral += error * self.dt
         derivative = (error - self.prev_error) / self.dt
         self.prev_error = error
-        print(self.Kp*error + self.Ki*self.integral + self.Kd*derivative)
         return self.Kp*error + self.Ki*self.integral + self.Kd*derivative
 
 def main():

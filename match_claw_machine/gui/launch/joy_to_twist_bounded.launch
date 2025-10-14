@@ -11,9 +11,9 @@
     <param name="y_max" value="0.70"/>
 
     <!-- Controls -->
-    <param name="axis_x" value="0"/>
-    <param name="axis_y" value="1"/>
-    <param name="enable_button" value="4"/>  <!-- LB z.B.; -1 = immer aktiv -->
+    <param name="axis_x" value="1"/>
+    <param name="axis_y" value="0"/>
+    <param name="enable_button" value="-1"/>  <!-- LB z.B.; -1 = immer aktiv -->
     <param name="deadzone" value="0.08"/>
 
     <!-- Dynamics -->
