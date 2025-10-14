@@ -149,3 +149,17 @@ def joy_to_twist(gui):
             )
             print(f"[joy-to-twist] {robot}/{ur}: {cmd}")
             _open_in_terminal(cmd)
+
+
+def launch_joystick_driver(gui):
+    selected_robots = gui.get_selected_robots()
+    workspace = gui.workspace_name
+    for robot in selected_robots:
+        cmd = (
+            f"ssh -t -t {robot} "
+            f"'source ~/.bashrc; export ROS_MASTER_URI=http://roscore:11311/; "
+            f"source /opt/ros/noetic/setup.bash; source ~/{workspace}/devel/setup.bash; "
+            f"rosrun joy joy_node; exec bash'"
+        )
+        print(f"[joystick_driver] {robot}: {cmd}")
+        _open_in_terminal(cmd)
