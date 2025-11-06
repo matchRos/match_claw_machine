@@ -32,7 +32,7 @@ class JoyToTwistBounded:
         self.y_max = rospy.get_param("~y_max",  0.40)
 
         # Z & Auto-Fahrt Parameter
-        self.z_down_m   = rospy.get_param("~z_down_m", 0.33)       # 36 cm runter
+        self.z_down_m   = rospy.get_param("~z_down_m", 0.342)       # 36 cm runter
         self.vz_max     = rospy.get_param("~vz_max", 0.08)         # m/s
         self.az_max     = rospy.get_param("~az_max", 0.40)         # m/s²
         self.j_max      = 10.0     # xy [m/s^3], Beispiel
@@ -40,14 +40,16 @@ class JoyToTwistBounded:
         self.pos_tol    = rospy.get_param("~pos_tol", 0.003)       # m (3D)
 
         # Sequenz: Ziele / Wartezeiten
-        self.drop_pos   = rospy.get_param("~drop_pos", [0.70, 0.00, 0.40])  # [x,y,z]
+        self.drop_pos   = rospy.get_param("~drop_pos", [0.80, -0.19, 0.38])  # [x,y,z]
+        self.start_sequence_pose = rospy.get_param("~start_sequence_pose", [0.40, 0.0, 0.6764303375444368])  # [x,y,z]
         self.dwell_after_close_s = rospy.get_param("~dwell_after_close_s", 2.0)
-        self.dwell_after_open_s  = rospy.get_param("~dwell_after_open_s", 1.0)
+        self.dwell_after_open_s  = rospy.get_param("~dwell_after_open_s", 6.0)
 
         # UR I/O Pins
         self.enable_pin    = rospy.get_param("~enable_pin", 1)      # muss 1 sein zum Bewegen
         self.gripper_pin   = rospy.get_param("~gripper_pin", 0)     # 0=open, 1=close
         self.sensor_di_pin = rospy.get_param("~sensor_di_pin", 0)   # digital input 0
+        self.conveyor_pin = rospy.get_param("~conveyor_pin", 4)  # digital output 4
 
         # Output Filter - Glättung der Ausgabe
         self.filter_alpha = rospy.get_param("~filter_alpha", 0.97)  # Exponentieller Filterfaktor [0..1], 0=no filter, 1=full filter
@@ -214,6 +216,20 @@ class JoyToTwistBounded:
         except Exception as e:
             rospy.logwarn("Enable pin failed: %s", e)
 
+    def _start_conveyor(self):
+        self._enable_gripper_io()
+        try:
+            self._set_do(self.conveyor_pin, 1)  # 1 = laufen
+        except Exception as e:
+            rospy.logwarn("Open conveyor DO failed: %s", e)
+
+    def _stop_conveyor(self):
+        self._enable_gripper_io()
+        try:
+            self._set_do(self.conveyor_pin, 0)  # 0 = gestoppt
+        except Exception as e:
+            rospy.logwarn("Close conveyor DO failed: %s", e)
+
     def _gripper_close(self):
         self._enable_gripper_io()
         try:
@@ -337,6 +353,7 @@ class JoyToTwistBounded:
         # --- Fahrt zur Ablageposition (3D) ---
         if self.mode == "to_drop":
             tgt = self.drop_pos
+            print(tgt)
             e = [tgt[0]-px, tgt[1]-py, tgt[2]-pz]
             dist = math.sqrt(e[0]**2 + e[1]**2 + e[2]**2)
             if dist <= self.pos_tol:
@@ -344,6 +361,7 @@ class JoyToTwistBounded:
                 self._publish(0.0, 0.0, 0.0)
                 # Greifer öffnen + Erkennungsfenster starten
                 self._gripper_open()
+                self._start_conveyor()
                 self._reset_filters()
                 self.detect_seen = False
                 self.detect_window_until = rospy.Time.now() + rospy.Duration.from_sec(2.0)  # 2s Fenster
@@ -372,11 +390,13 @@ class JoyToTwistBounded:
                 else:
                     rospy.loginfo("Kein Objekt erkannt (DI%d blieb LOW).", self.sensor_di_pin)
                 self.mode = "to_home"
+                self._stop_conveyor()
             return
 
         # --- Zurück zur Ausgangsposition ---
         if self.mode == "to_home":
-            tgt = self.start_pose
+            #tgt = self.start_pose # Fahre in die Position die der Roboter vor dem greifen hatte
+            tgt = self.start_sequence_pose # Fahre in die definierte Startposition
             e = [tgt[0]-px, tgt[1]-py, tgt[2]-pz]
             dist = math.sqrt(e[0]**2 + e[1]**2 + e[2]**2)
             if dist <= self.pos_tol:

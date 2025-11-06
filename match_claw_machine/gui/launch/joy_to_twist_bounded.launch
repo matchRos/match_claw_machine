@@ -5,10 +5,10 @@
     <param name="cmd_topic"  value="/mur620b/UR10_l/twist_controller/command_collision_free"/>
 
     <!-- Bounds -->
-    <param name="x_min" value="0.30"/>
-    <param name="x_max" value="0.65"/>
+    <param name="x_min" value="0.35"/>
+    <param name="x_max" value="0.88"/>
     <param name="y_min" value="-0.0"/>
-    <param name="y_max" value="0.70"/>
+    <param name="y_max" value="0.65"/>
 
     <!-- Controls -->
     <param name="axis_x" value="1"/>
