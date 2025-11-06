@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from copy import error
 import rospy, math
 from geometry_msgs.msg import PoseStamped, Twist
 from sensor_msgs.msg import Joy
@@ -48,6 +49,9 @@ class JoyToTwistBounded:
         self.gripper_pin   = rospy.get_param("~gripper_pin", 0)     # 0=open, 1=close
         self.sensor_di_pin = rospy.get_param("~sensor_di_pin", 0)   # digital input 0
 
+        # Output Filter - Glättung der Ausgabe
+        self.filter_alpha = rospy.get_param("~filter_alpha", 0.97)  # Exponentieller Filterfaktor [0..1], 0=no filter, 1=full filter
+
         # Internals
         self.last_pose = None
         self.last_joy  = None
@@ -64,6 +68,7 @@ class JoyToTwistBounded:
         self.integral = 0
         self.prev_error = 0
         self.dt = 1.0 / self.rate_hz
+        self.filtered_output = 0.0
 
         # DI 0 Überwachung
         self.di0_state = 0
@@ -223,6 +228,15 @@ class JoyToTwistBounded:
         except Exception as e:
             rospy.logwarn("Open gripper DO failed: %s", e)
 
+    def _reset_filters(self):
+        self.v_prev_xy = [0.0, 0.0]
+        self.v_prev_z  = 0.0
+        self.v_prev_xyz = [0.0, 0.0, 0.0]
+        self.a_prev_xyz = [0.0, 0.0, 0.0]
+        self.integral = 0.0
+        self.prev_error = 0.0
+        self.filtered_output = 0.0
+
     # ----- Sequence helpers -----
     def _start_sequence(self):
         if self.last_pose is None:
@@ -232,9 +246,7 @@ class JoyToTwistBounded:
         self.start_pose = [p.x, p.y, p.z]
         self.mode = "descend"
         self.z_target = p.z - self.z_down_m
-        self.v_prev_xy = [0.0, 0.0]
-        self.v_prev_z  = 0.0
-        self.v_prev_xyz = [0.0, 0.0, 0.0]
+        self._reset_filters()
         rospy.loginfo("Sequence start: descend to z=%.3f", self.z_target)
 
     # ---------- Main ----------
@@ -251,8 +263,8 @@ class JoyToTwistBounded:
         # XY-Modus (manuell)
         if self.mode == "xy":
             if self.last_joy is None or not enable_ok:
-                self.v_prev_xy = [0.0, 0.0]
                 self._publish(0.0, 0.0, 0.0)
+                self._reset_filters()
                 return
 
             ax = -self.last_joy.axes[self.axis_x] if self.axis_x < len(self.last_joy.axes) else 0.0
@@ -270,8 +282,7 @@ class JoyToTwistBounded:
 
         # Für Automatik-Modi Pose nötig
         if self.last_pose is None:
-            self.v_prev_z = 0.0
-            self.v_prev_xyz = [0.0, 0.0, 0.0]
+            self._reset_filters()
             self._publish(0.0, 0.0, 0.0)
             return
 
@@ -283,6 +294,7 @@ class JoyToTwistBounded:
             if abs(dz) <= self.pos_tol:
                 self.v_prev_z = 0.0
                 self._publish(0.0, 0.0, 0.0)
+                self._reset_filters()
                 rospy.sleep(0.1)  # kurz warten
                 rospy.loginfo("Descend done -> closing gripper.")
                 # Greifer schließen
@@ -310,7 +322,7 @@ class JoyToTwistBounded:
         if self.mode == "ascend":
             dz = self.z_target - pz
             if abs(dz) <= self.pos_tol:
-                self.v_prev_z = 0.0
+                self._reset_filters()
                 self._publish(0.0, 0.0, 0.0)
                 # weiter zur Ablageposition
                 self.mode = "to_drop"
@@ -332,6 +344,7 @@ class JoyToTwistBounded:
                 self._publish(0.0, 0.0, 0.0)
                 # Greifer öffnen + Erkennungsfenster starten
                 self._gripper_open()
+                self._reset_filters()
                 self.detect_seen = False
                 self.detect_window_until = rospy.Time.now() + rospy.Duration.from_sec(2.0)  # 2s Fenster
                 # Dwell (mind. dwell_after_open_s, überlappt mit Detect)
@@ -371,6 +384,7 @@ class JoyToTwistBounded:
                 self._publish(0.0, 0.0, 0.0)
                 self.mode = "xy"
                 rospy.loginfo("Sequence finished -> back to XY control.")
+                self._reset_filters()
                 return
             v_des = [
                 self.v_max * (e[0]/dist) if dist > 1e-6 else 0.0,
@@ -383,11 +397,13 @@ class JoyToTwistBounded:
             return
         
     def update(self, error):
-        print("Error:", error)
         self.integral += error * self.dt
         derivative = (error - self.prev_error) / self.dt
         self.prev_error = error
-        return self.Kp*error + self.Ki*self.integral + self.Kd*derivative
+        current_output = self.Kp*error + self.Ki*self.integral + self.Kd*derivative
+        # Exponentieller Filter
+        self.filtered_output = self.filter_alpha * self.filtered_output + (1 - self.filter_alpha) * current_output
+        return self.filtered_output
 
 def main():
     rospy.init_node("joystick_to_twist_bounded", anonymous=True)

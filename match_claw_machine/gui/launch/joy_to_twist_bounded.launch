@@ -6,7 +6,7 @@
 
     <!-- Bounds -->
     <param name="x_min" value="0.30"/>
-    <param name="x_max" value="0.70"/>
+    <param name="x_max" value="0.65"/>
     <param name="y_min" value="-0.0"/>
     <param name="y_max" value="0.70"/>
 
@@ -18,7 +18,7 @@
 
     <!-- Dynamics -->
     <param name="v_max" value="0.05"/>
-    <param name="a_max" value="0.20"/>
-    <param name="rate_hz" value="100.0"/>
+    <param name="a_max" value="0.10"/>
+    <param name="rate_hz" value="500.0"/>
   </node>
 </launch>

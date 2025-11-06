@@ -18,7 +18,7 @@ class RobotMover:
         rospy.init_node('robot_mover', anonymous=True)
 
         # Zielposition (Startposition des Roboters)
-        self.target_position = rospy.get_param('~start_pos', [0.33263377919966164, -0.028678860128717395, 0.6763138405651459])  # z.B. [x, y, z]
+        self.target_position = rospy.get_param('~start_pos', [0.33263377919966164, 0.0, 0.6763138405651459])  # z.B. [x, y, z]
         self.target_orientation = rospy.get_param('~start_orientation', [1.0, 0.0, 0.0, 0.0])  # Quaternion [x, y, z, w]
 
         # Publisher für Twist
@@ -48,7 +48,7 @@ class RobotMover:
         return sqrt(dx**2 + dy**2 + dz**2)
 
 
-    def move_to_start_fast(self, tolerance=0.0005):
+    def move_to_start_fast(self, tolerance=0.005):
 
         self.integral = 0
         self.prev_error = 0
