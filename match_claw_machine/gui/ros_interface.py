@@ -21,7 +21,7 @@ def launch_drivers(gui):
     for robot in selected_robots:
         cmd = (
             f"ssh -t -t {robot} "
-            f"'source ~/.bashrc; export ROS_MASTER_URI=http://roscore:11311/; "
+            f"'source ~/.bashrc; export ROS_MASTER_URI=http://{robot}:11311/; "
             f"source /opt/ros/noetic/setup.bash; source ~/{workspace}/devel/setup.bash; "
             f"roslaunch mur_launch_hardware {robot}.launch; exec bash'"
         )
@@ -88,10 +88,23 @@ def switch_to_arm_controller(gui):
             _switch_controller(robot, ur, target="arm")
 
 
-def _enable_ur(robot: str, ur_prefix: str):
+def _enable_ur(gui,robot: str, ur_prefix: str):
+
+    # wenn nur ein roboter ausgewählt ist, dann füge [] um den robot namen hinzu
+    if len(gui.get_selected_robots()) == 1:
+        robot_ = f"[{robot}]"
+    # wenn nur eine ur ausgewählt ist, dann füge [] um den ur namen hinzu
+    if len(gui.get_selected_urs()) == 1:
+        ur_prefix = f"[{ur_prefix}]"
+
+    # cmd = (
+    #     f"ROS_NAMESPACE={robot} roslaunch {PKG_UTIL} {LAUNCH_ENABLE_UR} "
+    #     f"tf_prefix:={robot_} UR_prefix:={ur_prefix}"
+    # )
+
     cmd = (
-        f"ROS_NAMESPACE={robot} roslaunch {PKG_UTIL} {LAUNCH_ENABLE_UR} "
-        f"tf_prefix:={robot} UR_prefix:={ur_prefix}"
+        f"roslaunch {PKG_UTIL} {LAUNCH_ENABLE_UR} "
+        f"robot_names:={robot_} UR_prefix:={ur_prefix}"
     )
     print(f"[enable-ur] {robot}/{ur_prefix}: {cmd}")
     _open_in_terminal(cmd)
@@ -104,7 +117,7 @@ def enable_selected_urs(gui):
         return
     for robot in selected_robots:
         for ur in selected_urs:
-            _enable_ur(robot, ur)
+            _enable_ur(gui, robot, ur)
 
 def start_move_to_true_start(gui):
     selected_robots = gui.get_selected_robots()
@@ -157,7 +170,7 @@ def launch_joystick_driver(gui):
     for robot in selected_robots:
         cmd = (
             f"ssh -t -t {robot} "
-            f"'source ~/.bashrc; export ROS_MASTER_URI=http://roscore:11311/; "
+            f"'source ~/.bashrc; export ROS_MASTER_URI=http://{robot}:11311/; "
             f"source /opt/ros/noetic/setup.bash; source ~/{workspace}/devel/setup.bash; "
             f"rosrun joy joy_node; exec bash'"
         )

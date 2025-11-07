@@ -32,7 +32,7 @@ class JoyToTwistBounded:
         self.y_max = rospy.get_param("~y_max",  0.40)
 
         # Z & Auto-Fahrt Parameter
-        self.z_down_m   = rospy.get_param("~z_down_m", 0.342)       # 36 cm runter
+        self.z_down_m   = rospy.get_param("~z_down_m", 0.342+0.0069)       # 36 cm runter
         self.vz_max     = rospy.get_param("~vz_max", 0.08)         # m/s
         self.az_max     = rospy.get_param("~az_max", 0.40)         # m/s²
         self.j_max      = 10.0     # xy [m/s^3], Beispiel
